@@ -2,11 +2,12 @@ FROM php:7.4.21-fpm
 
 RUN apt-get update \
   && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
-  && apt-get install -y libxml2-dev git unzip mariadb-client \
+  && apt-get install -y libonig-dev libxml2-dev git libzip-dev zip unzip mariadb-client \
   && pecl install imagick \
-  && docker-php-ext-configure gd --with-freetype-dir=/usr --with-png-dir=/usr --with-jpeg-dir=/usr --with-webp-dir \
-  && docker-php-ext-install gd mbstring opcache pdo pdo_mysql pdo_pgsql zip \
+  && docker-php-ext-configure gd --enable-gd --with-freetype --with-jpeg --with-webp \
+  && docker-php-ext-install gd opcache pdo pdo_mysql pdo_pgsql zip \
   && docker-php-ext-enable imagick \
+  && docker-php-source delete \
   && rm -rf /var/lib/apt/lists/*
 
 # composer
