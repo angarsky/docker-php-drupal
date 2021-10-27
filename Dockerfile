@@ -1,4 +1,4 @@
-FROM php:7.4.21-fpm
+FROM php:7.4.25-fpm
 
 RUN apt-get update \
   && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
@@ -28,3 +28,5 @@ RUN pecl install redis
 RUN touch /var/log/php_errors.log && chown www-data:www-data /var/log/php_errors.log
 
 WORKDIR /var/www
+
+USER www-data
