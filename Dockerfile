@@ -28,5 +28,3 @@ RUN pecl install redis
 RUN touch /var/log/php_errors.log && chown www-data:www-data /var/log/php_errors.log
 
 WORKDIR /var/www
-
-USER www-data
