@@ -1,4 +1,4 @@
-FROM php:7.4.25-fpm
+FROM php:7.4.27-fpm
 
 RUN apt-get update \
   && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
@@ -26,5 +26,8 @@ RUN pecl install redis
 
 # logs
 RUN touch /var/log/php_errors.log && chown www-data:www-data /var/log/php_errors.log
+
+# ImageMagick policy fix to allow PDF processing
+RUN sed -i -e "s/<\/policymap>/  <\!-- Custom by Angarsky -->\\n  <policy domain=\"coder\" rights=\"read \| write\" pattern=\"PDF\" \/>\\n<\/policymap>/g" /etc/ImageMagick-6/policy.xml
 
 WORKDIR /var/www
