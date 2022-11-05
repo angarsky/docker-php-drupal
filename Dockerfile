@@ -1,4 +1,4 @@
-FROM php:7.4.27-fpm
+FROM php:7.4.33-fpm
 
 RUN apt-get update \
   && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
