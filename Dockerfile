@@ -1,4 +1,4 @@
-FROM php:7.4.33-fpm
+FROM php:8.1.12-fpm
 
 RUN apt-get update \
   && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
@@ -14,12 +14,6 @@ RUN apt-get update \
 RUN curl --silent --show-error https://getcomposer.org/installer | php \
   && mv composer.phar /usr/local/bin/composer \
   && composer --version
-
-# drush
-RUN composer global require consolidation/cgr \
-  && export PATH="$HOME/.composer/vendor/bin:$PATH" \
-  && echo "export PATH=\"$HOME/.composer/vendor/bin:$PATH\"" >> ~/.bashrc \
-  && cgr drush/drush:8.x
 
 # redis
 RUN pecl install redis
