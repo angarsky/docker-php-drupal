@@ -1,9 +1,9 @@
 # https://docs.docker.com/docker-hub/repos/#pushing-a-docker-container-image-to-docker-hub
-FROM php:8.1.19-fpm
+FROM php:8.2.12-fpm
 
 # Libraries.
 RUN apt-get update \
-  && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp6 webp libmagickwand-dev \
+  && apt-get install -y libpng-dev libjpeg-dev libpq-dev libwebp-dev libwebp7 webp libmagickwand-dev \
   && apt-get install -y libonig-dev libxml2-dev git libzip-dev zip unzip mariadb-client \
   && pecl install imagick \
   && docker-php-ext-configure gd --enable-gd --with-freetype --with-jpeg --with-webp \
