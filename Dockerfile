@@ -1,5 +1,5 @@
 # https://docs.docker.com/docker-hub/repos/#pushing-a-docker-container-image-to-docker-hub
-FROM php:8.2.12-fpm
+FROM php:8.4.16-fpm
 
 # Libraries.
 RUN apt-get update \
@@ -24,7 +24,7 @@ RUN pecl install redis
 RUN touch /var/log/php_errors.log && chown www-data:www-data /var/log/php_errors.log
 
 # ImageMagick policy fix to allow PDF processing
-RUN sed -i -e "s/<\/policymap>/  <\!-- Custom by Angarsky -->\\n  <policy domain=\"coder\" rights=\"read \| write\" pattern=\"PDF\" \/>\\n<\/policymap>/g" /etc/ImageMagick-6/policy.xml
+RUN sed -i -e "s/<\/policymap>/  <\!-- Custom by Angarsky -->\\n  <policy domain=\"coder\" rights=\"read \| write\" pattern=\"PDF\" \/>\\n<\/policymap>/g" /etc/ImageMagick-7/policy.xml
 
 # DataDog
 #RUN curl -LO https://github.com/DataDog/dd-trace-php/releases/latest/download/datadog-setup.php \

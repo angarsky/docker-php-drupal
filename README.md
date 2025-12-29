@@ -2,6 +2,17 @@
 
 A Docker image with PHP to run Drupal sites locally.
 
+## Build
+
+* Use DigitalOcean instance to build proper `x86_64` images
+* Use following commands to build & push image
+
+```shell
+docker login
+docker build -f Alpine.Dockerfile -t angarsky/docker-php-drupal:8.4.16-alpine-datadog .
+docker push angarsky/docker-php-drupal:8.4.16-alpine-datadog
+```
+
 ## Usage
 
 This image is based on the official docker PHP-FPM image, extended by Composer, Drush and other packages. 
