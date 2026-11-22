@@ -1,0 +1,183 @@
+# Builds, smoke-tests and publishes the PHP 8.x images to Docker Hub.
+#
+#   Dockerfile                    -> angarsky/docker-php-drupal:X.Y.Z
+#   Dockerfile + WITH_DATADOG=1   -> angarsky/docker-php-drupal:X.Y.Z-datadog
+#   Alpine.Dockerfile             -> angarsky/docker-php-drupal:X.Y.Z-alpine-datadog
+#
+# X.Y.Z comes from the "FROM php:X.Y.Z-fpm..." lines, which must match in both files.
+#
+# Pull requests only build and test, with no secrets. Publishing runs only for main,
+# inside the "dockerhub" environment: that environment holds the DOCKERHUB_TOKEN
+# secret and accepts deployments from main only (Settings -> Environments).
+name: Docker image
+
+on:
+  pull_request:
+    branches: [main]
+  push:
+    branches: [main]
+    # Only image changes publish. Workflow/test-only changes are verified in their PR;
+    # use "Run workflow" on main if they ever need a re-publish.
+    paths:
+      - Dockerfile
+      - Alpine.Dockerfile
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  version:
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    outputs:
+      version: ${{ steps.parse.outputs.version }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Read PHP version from the Dockerfiles
+        id: parse
+        run: |
+          debian=$(grep -m1 -oP '^FROM\s+php:\K\d+\.\d+\.\d+(?=-fpm\s*$)' Dockerfile || true)
+          alpine=$(grep -m1 -oP '^FROM\s+php:\K\d+\.\d+\.\d+(?=-fpm-alpine\s*$)' Alpine.Dockerfile || true)
+          if [ -z "$debian" ] || [ -z "$alpine" ]; then
+            echo "::error::Expected 'FROM php:X.Y.Z-fpm' in Dockerfile and 'FROM php:X.Y.Z-fpm-alpine' in Alpine.Dockerfile"
+            exit 1
+          fi
+          if [ "$debian" != "$alpine" ]; then
+            echo "::error::PHP versions differ: Dockerfile=$debian, Alpine.Dockerfile=$alpine"
+            exit 1
+          fi
+          case "$debian" in
+            8.*) ;;
+            *) echo "::error::Only PHP 8.x is supported on this branch (got $debian)"; exit 1 ;;
+          esac
+          echo "version=$debian" >> "$GITHUB_OUTPUT"
+          echo "PHP version: \`$debian\`" >> "$GITHUB_STEP_SUMMARY"
+
+  build:
+    name: build (${{ matrix.variant }})
+    needs: version
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    strategy:
+      fail-fast: false
+      matrix: &variants
+        include:
+          - variant: debian
+            dockerfile: Dockerfile
+            suffix: ''
+            datadog: '0'
+            extensions: gd imagick pdo_mysql pdo_pgsql zip
+          - variant: debian-datadog
+            dockerfile: Dockerfile
+            suffix: '-datadog'
+            datadog: '1'
+            extensions: gd imagick pdo_mysql pdo_pgsql zip ddtrace
+          - variant: alpine-datadog
+            dockerfile: Alpine.Dockerfile
+            suffix: '-alpine-datadog'
+            datadog: '1'
+            extensions: gd imagick pdo_mysql pdo_pgsql zip redis ddtrace
+    env:
+      TAG: angarsky/docker-php-drupal:${{ needs.version.outputs.version }}${{ matrix.suffix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          build-args: WITH_DATADOG=${{ matrix.datadog }}
+          tags: ${{ env.TAG }}
+          load: true
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+
+      - name: Smoke test
+        env:
+          EXTENSIONS: ${{ matrix.extensions }}
+        run: bash .github/scripts/smoke-test.sh "$TAG" "$EXTENSIONS"
+
+      - name: Summary
+        run: echo "Built and tested \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
+
+  publish:
+    name: publish (${{ matrix.variant }})
+    needs: [version, build]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    runs-on: ubuntu-latest
+    timeout-minutes: 60
+    environment: dockerhub
+    strategy:
+      fail-fast: false
+      matrix: *variants
+    env:
+      TAG: angarsky/docker-php-drupal:${{ needs.version.outputs.version }}${{ matrix.suffix }}
+    steps:
+      - name: Checkout
+        uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
+        with:
+          persist-credentials: false
+
+      - name: Set up Docker Buildx
+        uses: docker/setup-buildx-action@f87e5991a6d7451dcb8d9637bfbc97413f497069 # v4.4.1
+
+      - name: Log in to Docker Hub
+        uses: docker/login-action@8aa5831fb8d48d8f76594c7ddde61ae58019f550 # v4.8.0
+        with:
+          username: angarsky
+          password: ${{ secrets.DOCKERHUB_TOKEN }}
+
+      # Rebuilt from the cache the build job just wrote, then tested again here, so the
+      # image pushed below is the exact one that passed the smoke test in this job.
+      - name: Build
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          build-args: WITH_DATADOG=${{ matrix.datadog }}
+          tags: ${{ env.TAG }}
+          load: true
+          provenance: false
+          sbom: false
+          cache-from: type=gha,scope=${{ matrix.variant }}
+
+      - name: Smoke test
+        env:
+          EXTENSIONS: ${{ matrix.extensions }}
+        run: bash .github/scripts/smoke-test.sh "$TAG" "$EXTENSIONS"
+
+      # Same inputs as "Build": every layer comes from this job's builder cache.
+      - name: Push
+        uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
+        with:
+          context: .
+          file: ${{ matrix.dockerfile }}
+          platforms: linux/amd64
+          build-args: WITH_DATADOG=${{ matrix.datadog }}
+          tags: ${{ env.TAG }}
+          push: true
+          provenance: mode=max
+          sbom: true
+
+      - name: Summary
+        run: echo "Published \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"

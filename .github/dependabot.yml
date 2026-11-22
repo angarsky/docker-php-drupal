@@ -1,0 +1,31 @@
+version: 2
+updates:
+  # New PHP 8.4.x patch releases -> one PR bumping FROM in both Dockerfiles.
+  # Minor/major moves (8.5, 9.x) stay a manual decision.
+  - package-ecosystem: docker
+    directory: /
+    schedule:
+      interval: daily
+    ignore:
+      - dependency-name: php
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    groups:
+      php:
+        patterns:
+          - php
+    commit-message:
+      prefix: Docker image
+
+  # Keeps the SHA-pinned actions in .github/workflows up to date.
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+    groups:
+      actions:
+        patterns:
+          - '*'
+    commit-message:
+      prefix: CI
