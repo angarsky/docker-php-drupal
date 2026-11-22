@@ -109,7 +109,9 @@ jobs:
           provenance: false
           sbom: false
           cache-from: type=gha,scope=${{ matrix.variant }}
-          cache-to: type=gha,mode=max,scope=${{ matrix.variant }}
+          # Only main writes the cache (PR runs may not, and must not seed it); a cache
+          # hiccup never fails the build.
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=gha,mode=max,scope={0},ignore-error=true', matrix.variant) || '' }}
 
       - name: Smoke test
         env:
