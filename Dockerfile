@@ -1,5 +1,5 @@
 # https://docs.docker.com/docker-hub/repos/#pushing-a-docker-container-image-to-docker-hub
-FROM php:8.4.16-fpm
+FROM php:8.4.28-fpm
 
 # Libraries.
 RUN apt-get update \
@@ -26,8 +26,12 @@ RUN touch /var/log/php_errors.log && chown www-data:www-data /var/log/php_errors
 # ImageMagick policy fix to allow PDF processing
 RUN sed -i -e "s/<\/policymap>/  <\!-- Custom by Angarsky -->\\n  <policy domain=\"coder\" rights=\"read \| write\" pattern=\"PDF\" \/>\\n<\/policymap>/g" /etc/ImageMagick-7/policy.xml
 
-# DataDog
-#RUN curl -LO https://github.com/DataDog/dd-trace-php/releases/latest/download/datadog-setup.php \
-#  && php datadog-setup.php --php-bin=all --enable-appsec --enable-profiling
+# DataDog (opt-in: --build-arg WITH_DATADOG=1, published as the "-datadog" tag)
+ARG WITH_DATADOG=0
+RUN if [ "$WITH_DATADOG" = "1" ]; then \
+    curl -LO https://github.com/DataDog/dd-trace-php/releases/latest/download/datadog-setup.php \
+    && php datadog-setup.php --php-bin=all --enable-appsec --enable-profiling \
+    && rm datadog-setup.php; \
+  fi
 
 WORKDIR /var/www
