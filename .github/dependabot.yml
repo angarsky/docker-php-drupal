@@ -1,9 +1,10 @@
 version: 2
 updates:
-  # New PHP 8.4.x patch releases -> one PR bumping FROM in both Dockerfiles.
-  # Minor/major moves (8.5, 9.x) stay a manual decision.
+  # New PHP patch releases -> one PR per version folder, bumping FROM in both of its
+  # Dockerfiles (8.4/ stays on 8.4.x, 8.5/ on 8.5.x). A new minor version is a new
+  # folder, added by hand - plus an entry here.
   - package-ecosystem: docker
-    directory: /
+    directory: /8.4
     schedule:
       interval: daily
     ignore:
@@ -12,7 +13,23 @@ updates:
           - version-update:semver-minor
           - version-update:semver-major
     groups:
-      php:
+      php-8.4:
+        patterns:
+          - php
+    commit-message:
+      prefix: Docker image
+
+  - package-ecosystem: docker
+    directory: /8.5
+    schedule:
+      interval: daily
+    ignore:
+      - dependency-name: php
+        update-types:
+          - version-update:semver-minor
+          - version-update:semver-major
+    groups:
+      php-8.5:
         patterns:
           - php
     commit-message:

@@ -1,14 +1,15 @@
 # Builds, smoke-tests and publishes the PHP 8.x images to Docker Hub.
 #
+# One folder per PHP minor version (8.4/, 8.5/, ...), each with:
 #   Dockerfile                    -> angarsky/docker-php-drupal:X.Y.Z
 #   Dockerfile + WITH_DATADOG=1   -> angarsky/docker-php-drupal:X.Y.Z-datadog
 #   Alpine.Dockerfile             -> angarsky/docker-php-drupal:X.Y.Z-alpine-datadog
+# X.Y.Z comes from the "FROM php:X.Y.Z-fpm..." lines (see .github/scripts/matrix.sh).
 #
-# X.Y.Z comes from the "FROM php:X.Y.Z-fpm..." lines, which must match in both files.
-#
-# Pull requests only build and test, with no secrets. Publishing runs only for main,
-# inside the "dockerhub" environment: that environment holds the DOCKERHUB_TOKEN
-# secret and accepts deployments from main only (Settings -> Environments).
+# Pull requests build and test every version, with no secrets. A push to main builds,
+# tests and publishes only the version folders it changed; "Run workflow" on main
+# publishes all of them. Publishing runs inside the "dockerhub" environment, which
+# holds the DOCKERHUB_TOKEN secret and accepts deployments from main only.
 name: Docker image
 
 on:
@@ -16,11 +17,9 @@ on:
     branches: [main]
   push:
     branches: [main]
-    # Only image changes publish. Workflow/test-only changes are verified in their PR;
-    # use "Run workflow" on main if they ever need a re-publish.
+    # Only image changes publish. Workflow/test-only changes are verified in their PR.
     paths:
-      - Dockerfile
-      - Alpine.Dockerfile
+      - '8.*/**'
   workflow_dispatch:
 
 permissions:
@@ -31,63 +30,60 @@ concurrency:
   cancel-in-progress: ${{ github.event_name == 'pull_request' }}
 
 jobs:
-  version:
+  plan:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     outputs:
-      version: ${{ steps.parse.outputs.version }}
+      matrix: ${{ steps.plan.outputs.matrix }}
+      empty: ${{ steps.plan.outputs.empty }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
         with:
+          fetch-depth: 0
           persist-credentials: false
 
-      - name: Read PHP version from the Dockerfiles
-        id: parse
+      - name: Pick the PHP versions to build
+        id: plan
+        env:
+          EVENT: ${{ github.event_name }}
+          BEFORE: ${{ github.event.before }}
+          SHA: ${{ github.sha }}
         run: |
-          debian=$(grep -m1 -oP '^FROM\s+php:\K\d+\.\d+\.\d+(?=-fpm\s*$)' Dockerfile || true)
-          alpine=$(grep -m1 -oP '^FROM\s+php:\K\d+\.\d+\.\d+(?=-fpm-alpine\s*$)' Alpine.Dockerfile || true)
-          if [ -z "$debian" ] || [ -z "$alpine" ]; then
-            echo "::error::Expected 'FROM php:X.Y.Z-fpm' in Dockerfile and 'FROM php:X.Y.Z-fpm-alpine' in Alpine.Dockerfile"
-            exit 1
+          # Validates every version folder, whatever gets built below.
+          all=$(bash .github/scripts/matrix.sh)
+          matrix=$all
+          if [ "$EVENT" = push ] && [ -n "$BEFORE" ] && [ "$BEFORE" != 0000000000000000000000000000000000000000 ]; then
+            changed=$(git diff --name-only "$BEFORE" "$SHA" | sed -nE 's#^(8\.[0-9]+)/.*#\1#p' | sort -u)
+            dirs=''
+            for d in $changed; do [ -d "$d" ] && dirs="$dirs $d"; done
+            if [ -n "$dirs" ]; then
+              # shellcheck disable=SC2086
+              matrix=$(bash .github/scripts/matrix.sh $dirs)
+            else
+              matrix='{"include":[]}'
+            fi
           fi
-          if [ "$debian" != "$alpine" ]; then
-            echo "::error::PHP versions differ: Dockerfile=$debian, Alpine.Dockerfile=$alpine"
-            exit 1
+          echo "matrix=$matrix" >> "$GITHUB_OUTPUT"
+          if [ "$matrix" = '{"include":[]}' ]; then
+            echo "empty=true" >> "$GITHUB_OUTPUT"
+            echo "Nothing to build" >> "$GITHUB_STEP_SUMMARY"
+          else
+            echo "empty=false" >> "$GITHUB_OUTPUT"
+            echo "$matrix" | jq -r '"Building: " + ([.include[] | .version + .suffix] | join(", "))' >> "$GITHUB_STEP_SUMMARY"
           fi
-          case "$debian" in
-            8.*) ;;
-            *) echo "::error::Only PHP 8.x is supported on this branch (got $debian)"; exit 1 ;;
-          esac
-          echo "version=$debian" >> "$GITHUB_OUTPUT"
-          echo "PHP version: \`$debian\`" >> "$GITHUB_STEP_SUMMARY"
 
   build:
-    name: build (${{ matrix.variant }})
-    needs: version
+    name: build (${{ matrix.php }}, ${{ matrix.variant }})
+    needs: plan
+    if: needs.plan.outputs.empty == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     strategy:
       fail-fast: false
-      matrix: &variants
-        include:
-          - variant: debian
-            dockerfile: Dockerfile
-            suffix: ''
-            datadog: '0'
-            extensions: gd imagick pdo_mysql pdo_pgsql zip
-          - variant: debian-datadog
-            dockerfile: Dockerfile
-            suffix: '-datadog'
-            datadog: '1'
-            extensions: gd imagick pdo_mysql pdo_pgsql zip ddtrace
-          - variant: alpine-datadog
-            dockerfile: Alpine.Dockerfile
-            suffix: '-alpine-datadog'
-            datadog: '1'
-            extensions: gd imagick pdo_mysql pdo_pgsql zip redis ddtrace
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
-      TAG: angarsky/docker-php-drupal:${{ needs.version.outputs.version }}${{ matrix.suffix }}
+      TAG: angarsky/docker-php-drupal:${{ matrix.version }}${{ matrix.suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -100,7 +96,7 @@ jobs:
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           build-args: WITH_DATADOG=${{ matrix.datadog }}
@@ -108,10 +104,10 @@ jobs:
           load: true
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.php }}-${{ matrix.variant }}
           # Only main writes the cache (PR runs may not, and must not seed it); a cache
           # hiccup never fails the build.
-          cache-to: ${{ github.event_name != 'pull_request' && format('type=gha,mode=max,scope={0},ignore-error=true', matrix.variant) || '' }}
+          cache-to: ${{ github.event_name != 'pull_request' && format('type=gha,mode=max,scope={0}-{1},ignore-error=true', matrix.php, matrix.variant) || '' }}
 
       - name: Smoke test
         env:
@@ -121,18 +117,38 @@ jobs:
       - name: Summary
         run: echo "Built and tested \`$TAG\`" >> "$GITHUB_STEP_SUMMARY"
 
+  # The one check to require in the branch ruleset: it stays the same when versions
+  # or variants are added or removed.
+  ci:
+    name: ci
+    if: always()
+    needs: [plan, build]
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - name: All builds passed
+        env:
+          PLAN: ${{ needs.plan.result }}
+          BUILD: ${{ needs.build.result }}
+        run: |
+          echo "plan: $PLAN, build: $BUILD"
+          if [ "$PLAN" != success ] || { [ "$BUILD" != success ] && [ "$BUILD" != skipped ]; }; then
+            echo "::error::A build failed"
+            exit 1
+          fi
+
   publish:
-    name: publish (${{ matrix.variant }})
-    needs: [version, build]
-    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch')
+    name: publish (${{ matrix.php }}, ${{ matrix.variant }})
+    needs: [plan, build]
+    if: github.ref == 'refs/heads/main' && (github.event_name == 'push' || github.event_name == 'workflow_dispatch') && needs.plan.outputs.empty == 'false'
     runs-on: ubuntu-latest
     timeout-minutes: 60
     environment: dockerhub
     strategy:
       fail-fast: false
-      matrix: *variants
+      matrix: ${{ fromJSON(needs.plan.outputs.matrix) }}
     env:
-      TAG: angarsky/docker-php-drupal:${{ needs.version.outputs.version }}${{ matrix.suffix }}
+      TAG: angarsky/docker-php-drupal:${{ matrix.version }}${{ matrix.suffix }}
     steps:
       - name: Checkout
         uses: actions/checkout@3d3c42e5aac5ba805825da76410c181273ba90b1 # v7.0.1
@@ -153,7 +169,7 @@ jobs:
       - name: Build
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           build-args: WITH_DATADOG=${{ matrix.datadog }}
@@ -161,7 +177,7 @@ jobs:
           load: true
           provenance: false
           sbom: false
-          cache-from: type=gha,scope=${{ matrix.variant }}
+          cache-from: type=gha,scope=${{ matrix.php }}-${{ matrix.variant }}
 
       - name: Smoke test
         env:
@@ -172,7 +188,7 @@ jobs:
       - name: Push
         uses: docker/build-push-action@c3c9e263c25d99ce0380d002d59b67737d91b0dc # v7.4.0
         with:
-          context: .
+          context: ${{ matrix.context }}
           file: ${{ matrix.dockerfile }}
           platforms: linux/amd64
           build-args: WITH_DATADOG=${{ matrix.datadog }}
